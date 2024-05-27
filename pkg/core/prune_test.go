@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -96,6 +97,7 @@ func TestPrune(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
 			// create a temporary directory
 			workDir := t.TempDir()
 			// create beforeFiles in the directory and create a target, but only if there are beforeFiles
@@ -124,7 +126,7 @@ func TestPrune(t *testing.T) {
 			executor := Executor{
 				Logger: logger,
 			}
-			err := executor.Prune(tt.opts)
+			err := executor.Prune(ctx, tt.opts)
 			switch {
 			case (err == nil && tt.err != nil) || (err != nil && tt.err == nil):
 				t.Errorf("expected error %v, got %v", tt.err, err)

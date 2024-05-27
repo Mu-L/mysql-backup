@@ -1,42 +1,47 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
-	"github.com/databacker/mysql-backup/pkg/remote"
-
+	"github.com/databacker/api/go/api"
 	"gopkg.in/yaml.v3"
+
+	"github.com/databacker/mysql-backup/pkg/remote"
 )
 
 // ProcessConfig reads the configuration from a stream and returns the parsed configuration.
 // If the configuration is of type remote, it will retrieve the remote configuration.
 // Continues to process remotes until it gets a final valid ConfigSpec or fails.
-func ProcessConfig(r io.Reader) (actualConfig *ConfigSpec, err error) {
-	var conf Config
+func ProcessConfig(r io.Reader) (actualConfig *api.ConfigSpec, err error) {
+	var conf api.Config
 	decoder := yaml.NewDecoder(r)
 	if err := decoder.Decode(&conf); err != nil {
 		return nil, fmt.Errorf("fatal error reading config file: %w", err)
 	}
 
 	// check that the version is something we recognize
-	if conf.Version != ConfigVersion {
+	if conf.Version != api.ConfigDatabackIoV1 {
 		return nil, fmt.Errorf("unknown config version: %s", conf.Version)
+	}
+	specBytes, err := yaml.Marshal(conf.Spec)
+	if err != nil {
+		return nil, fmt.Errorf("error marshalling spec part of configuration: %w", err)
 	}
 	// if the config type is remote, retrieve our remote configuration
 	// repeat until we end up with a configuration that is of type local
 	for {
 		switch conf.Kind {
-		case KindLocal:
-			// parse the config.Config
-			spec, ok := conf.Spec.(ConfigSpec)
-			if !ok {
+		case api.Local:
+			var spec api.ConfigSpec
+			if err := yaml.Unmarshal(specBytes, &spec); err != nil {
 				return nil, fmt.Errorf("parsed yaml had kind local, but spec invalid")
 			}
 			actualConfig = &spec
-		case KindRemote:
-			spec, ok := conf.Spec.(RemoteSpec)
-			if !ok {
+		case api.Remote:
+			var spec api.RemoteSpec
+			if err := yaml.Unmarshal(specBytes, &spec); err != nil {
 				return nil, fmt.Errorf("parsed yaml had kind remote, but spec invalid")
 			}
 			remoteConfig, err := getRemoteConfig(spec)
@@ -56,15 +61,18 @@ func ProcessConfig(r io.Reader) (actualConfig *ConfigSpec, err error) {
 
 // getRemoteConfig given a RemoteSpec for a config, retrieve the config from the remote
 // and parse it into a Config struct.
-func getRemoteConfig(spec RemoteSpec) (conf Config, err error) {
-	resp, err := remote.OpenConnection(spec.URL, spec.Certificates, spec.Credentials)
+func getRemoteConfig(spec api.RemoteSpec) (conf api.Config, err error) {
+	if spec.URL == nil || spec.Certificates == nil || spec.Credentials == nil {
+		return conf, errors.New("empty fields for components")
+	}
+	resp, err := remote.OpenConnection(*spec.URL, *spec.Certificates, *spec.Credentials)
 	if err != nil {
 		return conf, fmt.Errorf("error getting reader: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Read the body of the response and convert to a config.Config struct
-	var baseConf Config
+	var baseConf api.Config
 	decoder := yaml.NewDecoder(resp.Body)
 	if err := decoder.Decode(&baseConf); err != nil {
 		return conf, fmt.Errorf("invalid config file retrieved from server: %w", err)
